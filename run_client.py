@@ -47,6 +47,10 @@ if __name__ == '__main__':
                           type=str,
                           default='fr',
                           help='Target language for translation, e.g., "fr" for French.')
+    parser.add_argument('--output_json',
+                          type=str,
+                          default=None,
+                          help='Path to save transcription as JSON for diarization (Stage 2).')
 
     args = parser.parse_args()
 
@@ -80,5 +84,6 @@ if __name__ == '__main__':
             mute_audio_playback=args.mute_audio_playback,      # Only used for file input, False by Default
             enable_translation=args.enable_translation,        # Enable translation of the transcription output
             target_language=args.target_language,              # Target language for translation, e.g., "fr
+            output_json_path=args.output_json,                 # Save JSON for diarization (Stage 2)
         )
         client(f)

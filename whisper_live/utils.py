@@ -43,6 +43,34 @@ def create_srt_file(segments, resampled_file):
             segment_number += 1
 
 
+def create_srt_file_with_speakers(segments, output_path):
+    """
+    Create SRT file with speaker labels.
+
+    Format:
+        1
+        00:00:00,000 --> 00:00:02,500
+        [SPEAKER_00] Hello everyone
+
+    Args:
+        segments: List of dicts with 'start', 'end', 'text', and 'speaker' keys.
+        output_path: Path to write the SRT file.
+    """
+    with open(output_path, 'w', encoding='utf-8') as srt_file:
+        segment_number = 1
+        for segment in segments:
+            start_time = format_time(float(segment['start']))
+            end_time = format_time(float(segment['end']))
+            text = segment['text']
+            speaker = segment.get('speaker', 'UNKNOWN')
+
+            srt_file.write(f"{segment_number}\n")
+            srt_file.write(f"{start_time} --> {end_time}\n")
+            srt_file.write(f"[{speaker}] {text}\n\n")
+
+            segment_number += 1
+
+
 def resample(file: str, sr: int = 16000):
     """
     Resample the audio file to 16kHz.

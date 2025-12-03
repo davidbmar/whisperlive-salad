@@ -78,7 +78,8 @@ class OfflineDiarizer:
         self,
         audio_path: str,
         min_speakers: Optional[int] = None,
-        max_speakers: Optional[int] = None
+        max_speakers: Optional[int] = None,
+        show_progress: bool = True
     ) -> List[Tuple[float, float, str]]:
         """
         Run diarization on an audio file.
@@ -87,11 +88,50 @@ class OfflineDiarizer:
             audio_path: Path to the audio file.
             min_speakers: Minimum number of speakers (optional hint).
             max_speakers: Maximum number of speakers (optional hint).
+            show_progress: Show progress updates during processing.
 
         Returns:
             List of (start_time, end_time, speaker_label) tuples.
         """
+        import time
+        import threading
+        import subprocess
+
+        # Get audio duration using ffprobe (more reliable than wave for various formats)
+        audio_duration = None
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', audio_path],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                audio_duration = float(result.stdout.strip())
+                print(f"[INFO] Audio duration: {audio_duration:.1f}s ({audio_duration/60:.1f} min)")
+        except Exception as e:
+            print(f"[INFO] Could not determine audio duration: {e}")
+
         print(f"[INFO] Running diarization on {audio_path}...")
+        if audio_duration:
+            est_time = audio_duration * 0.4  # Estimate ~0.4x realtime
+            print(f"[INFO] Estimated processing time: {est_time:.0f}s ({est_time/60:.1f} min)")
+
+        start_time = time.time()
+        stop_progress = threading.Event()
+
+        # Background progress printer
+        def print_progress():
+            while not stop_progress.wait(30):  # Print every 30 seconds
+                elapsed = time.time() - start_time
+                if audio_duration:
+                    est_remaining = max(0, (audio_duration * 0.4) - elapsed)
+                    print(f"[PROGRESS] Elapsed: {elapsed:.0f}s ({elapsed/60:.1f} min) | Est. remaining: {est_remaining:.0f}s")
+                else:
+                    print(f"[PROGRESS] Elapsed: {elapsed:.0f}s ({elapsed/60:.1f} min)")
+
+        if show_progress:
+            progress_thread = threading.Thread(target=print_progress, daemon=True)
+            progress_thread.start()
 
         # Build pipeline parameters
         params = {}
@@ -101,10 +141,16 @@ class OfflineDiarizer:
             params["max_speakers"] = max_speakers
 
         # Run diarization
-        if params:
-            result = self.pipeline(audio_path, **params)
-        else:
-            result = self.pipeline(audio_path)
+        try:
+            if params:
+                result = self.pipeline(audio_path, **params)
+            else:
+                result = self.pipeline(audio_path)
+        finally:
+            stop_progress.set()
+
+        elapsed = time.time() - start_time
+        print(f"[INFO] Diarization inference complete. Elapsed: {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
         # Handle different pyannote output types
         # Newer versions return DiarizeOutput, older return Annotation directly
@@ -211,6 +257,9 @@ class OfflineDiarizer:
             Dict with 'segments' (with speaker labels), 'speakers' list,
             and raw 'diarization' turns.
         """
+        import time
+        total_start = time.time()
+
         # Load transcription
         segments = self.load_transcription(transcription_path)
         print(f"[INFO] Loaded {len(segments)} transcription segments.")
@@ -223,10 +272,30 @@ class OfflineDiarizer:
         )
 
         # Assign speakers to segments
+        print("[INFO] Assigning speakers to segments...")
         segments_with_speakers = self.assign_speakers(segments, diarization)
 
         # Get unique speakers
         speakers = sorted(set(seg['speaker'] for seg in segments_with_speakers))
+
+        total_elapsed = time.time() - total_start
+
+        # Get audio duration for stats
+        try:
+            import wave
+            with wave.open(audio_path, 'rb') as wf:
+                audio_duration = wf.getnframes() / wf.getframerate()
+            realtime_factor = total_elapsed / audio_duration
+        except Exception:
+            audio_duration = None
+            realtime_factor = None
+
+        print(f"\n{'='*60}")
+        print(f"[TIMING] Total processing time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+        if audio_duration:
+            print(f"[TIMING] Audio duration: {audio_duration:.1f}s ({audio_duration/60:.1f} min)")
+            print(f"[TIMING] Realtime factor: {realtime_factor:.2f}x (lower is faster)")
+        print(f"{'='*60}\n")
 
         return {
             "segments": segments_with_speakers,
@@ -234,7 +303,12 @@ class OfflineDiarizer:
             "diarization": [
                 {"start": s, "end": e, "speaker": spk}
                 for s, e, spk in diarization
-            ]
+            ],
+            "timing": {
+                "processing_seconds": round(total_elapsed, 1),
+                "audio_seconds": round(audio_duration, 1) if audio_duration else None,
+                "realtime_factor": round(realtime_factor, 2) if realtime_factor else None
+            }
         }
 
     def save_json(self, result: Dict[str, Any], output_path: str):

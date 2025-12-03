@@ -29,6 +29,7 @@ class Client:
         translate=False,
         model="small",
         srt_file_path="output.srt",
+        json_file_path=None,
         use_vad=True,
         use_wss=False,
         log_transcription=True,
@@ -56,6 +57,7 @@ class Client:
             translate (bool, optional): Specifies if the task is translation. Default is False.
             model (str, optional): The whisper model to use (e.g., "small", "medium", "large"). Default is "small".
             srt_file_path (str, optional): The file path to save the output SRT file. Default is "output.srt".
+            json_file_path (str, optional): The file path to save the output JSON file. Default is None (disabled).
             use_vad (bool, optional): Whether to enable voice activity detection. Default is True.
             log_transcription (bool, optional): Whether to log transcription output to the console. Default is True.
             send_last_n_segments (int, optional): Number of most recent segments to send to the client. Defaults to 10.
@@ -78,6 +80,7 @@ class Client:
         self.model = model
         self.server_error = False
         self.srt_file_path = srt_file_path
+        self.json_file_path = json_file_path
         self.use_vad = use_vad
         self.use_wss = use_wss
         self.last_segment = None
@@ -333,6 +336,29 @@ class Client:
         if self.enable_translation:
             utils.create_srt_file(self.translated_transcript, self.translation_srt_file_path)
 
+    def write_json_file(self, output_path=None):
+        """
+        Writes out the transcript in JSON format for use with diarization.
+
+        Args:
+            output_path (str, optional): The path to the target file.
+                                         If None, uses self.json_file_path.
+        """
+        output_path = output_path or self.json_file_path
+        if not output_path:
+            return
+
+        if self.server_backend == "faster_whisper":
+            if not self.transcript and self.last_segment is not None:
+                self.transcript.append(self.last_segment)
+            elif self.last_segment and self.transcript[-1]["text"] != self.last_segment["text"]:
+                self.transcript.append(self.last_segment)
+
+            output = {"segments": self.transcript}
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(output, f, indent=2, ensure_ascii=False)
+            print(f"[INFO] Saved transcription JSON to {output_path}")
+
     def wait_before_disconnect(self):
         """Waits a bit before disconnecting in order to process pending responses."""
         assert self.last_response_received
@@ -423,6 +449,12 @@ class TranscriptionTeeClient:
         for client in self.clients:
             client.write_srt_file(client.srt_file_path)
 
+    def write_all_clients_json(self):
+        """Writes out .json files for all clients (if json_file_path is set)."""
+        for client in self.clients:
+            if client.json_file_path:
+                client.write_json_file(client.json_file_path)
+
     def multicast_packet(self, packet, unconditional=False):
         """
         Sends an identical packet via all clients.
@@ -484,6 +516,7 @@ class TranscriptionTeeClient:
                     client.wait_before_disconnect()
                 self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
                 self.write_all_clients_srt()
+                self.write_all_clients_json()
                 if self.stream:
                     self.stream.close()
                 self.close_all_clients()
@@ -495,6 +528,7 @@ class TranscriptionTeeClient:
                 self.p.terminate()
                 self.close_all_clients()
                 self.write_all_clients_srt()
+                self.write_all_clients_json()
                 print("[INFO]: Keyboard interrupt.")
 
     def process_rtsp_stream(self, rtsp_url):
@@ -516,6 +550,7 @@ class TranscriptionTeeClient:
             self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
             self.close_all_clients()
             self.write_all_clients_srt()
+            self.write_all_clients_json()
         print("[INFO]: RTSP stream processing finished.")
 
     def process_hls_stream(self, hls_url, save_file=None):
@@ -538,6 +573,7 @@ class TranscriptionTeeClient:
             self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
             self.close_all_clients()
             self.write_all_clients_srt()
+            self.write_all_clients_json()
         print("[INFO]: HLS stream processing finished.")
 
     def process_av_stream(self, container, stream_type, save_file=None):
@@ -612,6 +648,7 @@ class TranscriptionTeeClient:
         if self.save_output_recording:
             self.write_output_recording(n_audio_file)
         self.write_all_clients_srt()
+        self.write_all_clients_json()
 
     def record(self):
         """
@@ -649,6 +686,7 @@ class TranscriptionTeeClient:
                         n_audio_file += 1
                     self.frames = b""
             self.write_all_clients_srt()
+            self.write_all_clients_json()
 
         except KeyboardInterrupt:
             self.finalize_recording(n_audio_file)
@@ -745,6 +783,7 @@ class TranscriptionClient(TranscriptionTeeClient):
         save_output_recording (bool, optional): Whether to save the microphone recording. Default is False.
         output_recording_filename (str, optional): Path to save the output recording WAV file. Default is "./output_recording.wav".
         output_transcription_path (str, optional): File path to save the output transcription (SRT file). Default is "./output.srt".
+        output_json_path (str, optional): File path to save transcription as JSON for diarization. Default is None (disabled).
         log_transcription (bool, optional): Whether to log transcription output to the console. Default is True.
         mute_audio_playback (bool, optional): If True, mutes audio playback during file playback. Default is False.
         send_last_n_segments (int, optional): Number of most recent segments to send to the client. Defaults to 10.
@@ -779,6 +818,7 @@ class TranscriptionClient(TranscriptionTeeClient):
         save_output_recording=False,
         output_recording_filename="./output_recording.wav",
         output_transcription_path="./output.srt",
+        output_json_path=None,
         log_transcription=True,
         mute_audio_playback=False,
         send_last_n_segments=10,
@@ -798,6 +838,7 @@ class TranscriptionClient(TranscriptionTeeClient):
             translate,
             model,
             srt_file_path=output_transcription_path,
+            json_file_path=output_json_path,
             use_vad=use_vad,
             use_wss=use_wss,
             log_transcription=log_transcription,

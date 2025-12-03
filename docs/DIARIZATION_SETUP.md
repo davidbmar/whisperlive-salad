@@ -179,6 +179,26 @@ echo "Setup complete. Run with:"
 echo "  python run_diarization.py -a audio.wav -t transcription.json -o output.json"
 ```
 
+## Performance Benchmarks
+
+Tested on AWS g4dn.xlarge (NVIDIA T4 GPU, 16GB VRAM):
+
+| Audio Duration | Processing Time | Realtime Factor | Speakers Found |
+|---------------|-----------------|-----------------|----------------|
+| 12 min        | ~2 min          | 0.17x           | 2              |
+| 48 min        | ~4.3 min        | 0.09x           | 6              |
+
+**Notes:**
+- First run is slower (~0.4x) due to model loading and CUDA warmup
+- Subsequent runs are much faster (~0.09x) with warm GPU
+- Model uses ~2.8GB VRAM
+- Processing speed improves with longer audio (batch efficiency)
+
+**Progress tracking:**
+- Shows audio duration and estimated processing time at start
+- Prints progress every 30 seconds with elapsed/remaining time
+- Final summary includes realtime factor
+
 ## Version Compatibility
 
 Tested with:

@@ -156,27 +156,56 @@ python run_diarization.py \
 [SPEAKER_01] Hi there
 ```
 
-## Setup Script (TODO)
+## Fast GPU Provisioning (Recommended)
 
-Once working, create `scripts/setup-diarization.sh`:
+For deploying to new GPU boxes without manual HuggingFace setup, use pre-cached models from S3.
+
+### Provision a New GPU Box
 ```bash
-#!/bin/bash
-# Install dependencies
-pip install pyannote.audio scipy av
+# Download and run the provisioning script
+curl -O https://raw.githubusercontent.com/davidbmar/whisperlive-salad/main/scripts/provision-diarization-gpu.sh
+chmod +x provision-diarization-gpu.sh
+./provision-diarization-gpu.sh
+```
 
-# Check for HF_TOKEN
-if [ -z "$HF_TOKEN" ]; then
-    echo "ERROR: Set HF_TOKEN environment variable"
-    echo "Get token from: https://huggingface.co/settings/tokens"
-    echo ""
-    echo "MANUAL STEPS REQUIRED:"
-    echo "1. Accept terms at: https://huggingface.co/pyannote/speaker-diarization-3.1"
-    echo "2. Accept terms at: https://huggingface.co/pyannote/segmentation-3.0"
-    exit 1
-fi
+Or manually:
+```bash
+# 1. Install system deps
+sudo apt update && sudo apt install -y ffmpeg python3-pip
 
-echo "Setup complete. Run with:"
-echo "  python run_diarization.py -a audio.wav -t transcription.json -o output.json"
+# 2. Download cached models (29MB)
+aws s3 cp s3://dbm-cf-2-web/bintarball/diarized/latest/huggingface-cache.tar.gz /tmp/
+mkdir -p ~/.cache
+tar -xzf /tmp/huggingface-cache.tar.gz -C ~/.cache/
+
+# 3. Install pinned Python deps
+aws s3 cp s3://dbm-cf-2-web/bintarball/diarized/latest/requirements-diarization.txt /tmp/
+pip install -r /tmp/requirements-diarization.txt
+
+# 4. Clone repo
+git clone https://github.com/davidbmar/whisperlive-salad.git ~/whisperlive
+```
+
+**Benefits:**
+- No HuggingFace account/token needed
+- No manual license acceptance
+- Pinned versions for reproducibility
+- ~2 minute setup time
+
+### Update Cached Models
+When updating pyannote or models, re-cache from a working GPU box:
+```bash
+./scripts/cache-diarization-models.sh 1.1
+```
+
+### S3 Cache Structure
+```
+s3://dbm-cf-2-web/bintarball/diarized/
+├── v1.0/
+│   ├── huggingface-cache.tar.gz  # 29MB - all pyannote models
+│   ├── requirements-diarization.txt
+│   └── manifest.json
+└── latest/  # Always points to current version
 ```
 
 ## Performance Benchmarks

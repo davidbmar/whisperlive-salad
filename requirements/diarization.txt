@@ -1,0 +1,28 @@
+# Diarization dependencies - pinned versions
+# Tested on AWS g4dn.xlarge (NVIDIA T4, CUDA 12.8)
+# Performance: 48 min audio → 4.3 min processing (0.09x realtime)
+
+# Core diarization
+pyannote-audio==4.0.2
+pyannote-core==6.0.1
+pyannote-database==6.1.0
+pyannote-pipeline==4.0.0
+
+# PyTorch with CUDA 12.8 support
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0+cu128
+torchaudio==2.8.0+cu128
+
+# Audio processing
+scipy==1.15.3
+av==16.0.1
+soundfile==0.13.1
+
+# ML utilities
+pytorch-lightning==2.6.0
+pytorch-metric-learning==2.9.0
+torchmetrics==1.8.2
+
+# Audio augmentation (required by pyannote)
+asteroid-filterbanks==0.4.0
+julius==0.2.7

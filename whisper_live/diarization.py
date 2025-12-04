@@ -15,7 +15,16 @@ import json
 import os
 from typing import List, Tuple, Dict, Any, Optional
 
+# PyTorch 2.6+ changed weights_only default to True, which breaks pyannote model loading.
+# We need to patch torch.load BEFORE importing pyannote.audio.
 import torch
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    # Force weights_only=False for pyannote model compatibility
+    kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
 import numpy as np
 
 
@@ -66,10 +75,19 @@ class OfflineDiarizer:
         if not self.hf_token:
             print("[INFO] No HF_TOKEN provided, attempting to load from cache...")
             try:
-                # Try cache-only loading (pyannote 3.x API)
-                self.pipeline = Pipeline.from_pretrained(model, local_files_only=True)
-                pipeline_loaded = True
-                print("[INFO] Successfully loaded model from cache (no token needed)")
+                # Set HF_HUB_OFFLINE to force cache-only loading
+                original_offline = os.environ.get("HF_HUB_OFFLINE")
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                try:
+                    self.pipeline = Pipeline.from_pretrained(model)
+                    pipeline_loaded = True
+                    print("[INFO] Successfully loaded model from cache (no token needed)")
+                finally:
+                    # Restore original env var state
+                    if original_offline is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = original_offline
             except Exception as e:
                 # Cache miss or other error - will need token
                 print(f"[INFO] Cache-only loading failed: {e}")

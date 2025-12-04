@@ -52,12 +52,6 @@ class OfflineDiarizer:
             )
 
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
-        if not self.hf_token:
-            raise ValueError(
-                "HuggingFace token required. Provide via hf_token parameter "
-                "or HF_TOKEN environment variable. "
-                "Get your token at: https://huggingface.co/settings/tokens"
-            )
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,12 +59,35 @@ class OfflineDiarizer:
             self.device = torch.device(device)
 
         print(f"[INFO] Loading diarization model on {self.device}...")
-        # Note: newer pyannote versions use 'token' instead of 'use_auth_token'
-        try:
-            self.pipeline = Pipeline.from_pretrained(model, token=self.hf_token)
-        except TypeError:
-            # Fallback for older versions
-            self.pipeline = Pipeline.from_pretrained(model, use_auth_token=self.hf_token)
+
+        # Try loading from cache first (no token needed if models are cached)
+        pipeline_loaded = False
+
+        if not self.hf_token:
+            print("[INFO] No HF_TOKEN provided, attempting to load from cache...")
+            try:
+                # Try cache-only loading (pyannote 3.x API)
+                self.pipeline = Pipeline.from_pretrained(model, local_files_only=True)
+                pipeline_loaded = True
+                print("[INFO] Successfully loaded model from cache (no token needed)")
+            except Exception as e:
+                # Cache miss or other error - will need token
+                print(f"[INFO] Cache-only loading failed: {e}")
+
+        if not pipeline_loaded:
+            if not self.hf_token:
+                raise ValueError(
+                    "HuggingFace token required (models not found in cache). "
+                    "Provide via hf_token parameter or HF_TOKEN environment variable. "
+                    "Get your token at: https://huggingface.co/settings/tokens"
+                )
+            # Load with token
+            try:
+                self.pipeline = Pipeline.from_pretrained(model, token=self.hf_token)
+            except TypeError:
+                # Fallback for older pyannote versions
+                self.pipeline = Pipeline.from_pretrained(model, use_auth_token=self.hf_token)
+
         self.pipeline.to(self.device)
         print("[INFO] Diarization model loaded.")
 

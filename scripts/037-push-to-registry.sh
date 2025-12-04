@@ -26,6 +26,7 @@ set -euo pipefail
 SCRIPT_NAME="037-push-to-registry"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 # Default options
 REGISTRY_TYPE="${REGISTRY_TYPE:-dockerhub}"

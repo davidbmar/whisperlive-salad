@@ -1,10 +1,12 @@
 #!/bin/bash
 # Provision diarization on existing GPU instance
-# Installs pyannote.audio and downloads cached models from S3
+# Downloads models from S3 to build box, then SCPs to GPU instance
+# This approach works without AWS credentials on the GPU instance
 #
 # Prerequisites:
 #   - GPU instance already running (use 020-deploy-gpu-instance.sh)
 #   - .env file configured (use 000-questions.sh)
+#   - AWS credentials on build box (for S3 access)
 #
 # Usage: ./scripts/050-provision-diarization.sh
 
@@ -13,8 +15,16 @@ set -euo pipefail
 SCRIPT_NAME="050-provision-diarization"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 S3_DIARIZATION_PATH="s3://dbm-cf-2-web/bintarball/diarized/latest"
+LOCAL_CACHE_DIR="/tmp/diarization-provision-$$"
+
+# Cleanup on exit
+cleanup() {
+    rm -rf "$LOCAL_CACHE_DIR"
+}
+trap cleanup EXIT
 
 echo "============================================================================"
 echo "Provisioning Diarization on GPU Instance"
@@ -45,7 +55,7 @@ echo "S3 Models: $S3_DIARIZATION_PATH"
 echo ""
 
 # Check SSH connectivity
-echo "[1/5] Checking SSH connectivity..."
+echo "[1/6] Checking SSH connectivity..."
 if ! validate_ssh_connectivity "$GPU_IP" "$SSH_KEY_PATH"; then
     print_status "error" "Cannot SSH to GPU instance"
     exit 1
@@ -54,7 +64,7 @@ print_status "ok" "SSH connection OK"
 echo ""
 
 # Check if diarization already installed
-echo "[2/5] Checking existing installation..."
+echo "[2/6] Checking existing installation..."
 PYANNOTE_INSTALLED=$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" \
     'pip show pyannote-audio 2>/dev/null | grep Version || echo "not installed"')
 
@@ -72,48 +82,56 @@ fi
 echo ""
 
 # Install system dependencies
-echo "[3/5] Installing system dependencies..."
-ssh -i "$SSH_KEY_PATH" ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
+echo "[3/6] Installing system dependencies on GPU..."
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
 set -e
 echo "Installing ffmpeg..."
-sudo apt update -qq
+sudo apt update -qq 2>/dev/null
 sudo apt install -y ffmpeg > /dev/null 2>&1
 echo "ffmpeg installed: $(ffmpeg -version 2>&1 | head -1)"
 REMOTE_SCRIPT
 print_status "ok" "System dependencies installed"
 echo ""
 
-# Download cached models from S3
-echo "[4/5] Downloading cached models from S3..."
-ssh -i "$SSH_KEY_PATH" ubuntu@"$GPU_IP" << REMOTE_SCRIPT
+# Download from S3 to build box
+echo "[4/6] Downloading models from S3 to build box..."
+mkdir -p "$LOCAL_CACHE_DIR"
+
+echo "  Downloading huggingface-cache.tar.gz..."
+aws s3 cp "$S3_DIARIZATION_PATH/huggingface-cache.tar.gz" "$LOCAL_CACHE_DIR/huggingface-cache.tar.gz" --quiet
+echo "  Downloading requirements-diarization.txt..."
+aws s3 cp "$S3_DIARIZATION_PATH/requirements-diarization.txt" "$LOCAL_CACHE_DIR/requirements-diarization.txt" --quiet
+
+print_status "ok" "Downloaded to build box: $(du -sh "$LOCAL_CACHE_DIR" | cut -f1)"
+echo ""
+
+# SCP files to GPU instance
+echo "[5/6] Transferring files to GPU instance..."
+scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no \
+    "$LOCAL_CACHE_DIR/huggingface-cache.tar.gz" \
+    "$LOCAL_CACHE_DIR/requirements-diarization.txt" \
+    ubuntu@"$GPU_IP":/tmp/
+
+print_status "ok" "Files transferred to GPU"
+echo ""
+
+# Install on GPU instance
+echo "[6/6] Installing on GPU instance..."
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
 set -e
-S3_PATH="$S3_DIARIZATION_PATH"
 
-echo "Downloading model cache..."
-aws s3 cp "\$S3_PATH/huggingface-cache.tar.gz" /tmp/huggingface-cache.tar.gz
-
-echo "Extracting to ~/.cache..."
+echo "Extracting model cache..."
 mkdir -p ~/.cache
 tar -xzf /tmp/huggingface-cache.tar.gz -C ~/.cache/
 rm /tmp/huggingface-cache.tar.gz
 
 echo "Models installed:"
-ls -la ~/.cache/huggingface/hub/ | grep models--pyannote || echo "No models found"
-REMOTE_SCRIPT
-print_status "ok" "Models downloaded and extracted"
+ls ~/.cache/huggingface/hub/ | grep models--pyannote || echo "No models found"
+
 echo ""
-
-# Install Python dependencies
-echo "[5/5] Installing Python dependencies..."
-ssh -i "$SSH_KEY_PATH" ubuntu@"$GPU_IP" << REMOTE_SCRIPT
-set -e
-S3_PATH="$S3_DIARIZATION_PATH"
-
-echo "Downloading pinned requirements..."
-aws s3 cp "\$S3_PATH/requirements-diarization.txt" /tmp/requirements-diarization.txt
-
 echo "Installing Python packages (this may take a few minutes)..."
 pip install -q -r /tmp/requirements-diarization.txt
+rm /tmp/requirements-diarization.txt
 
 echo ""
 echo "Installed versions:"
@@ -125,7 +143,7 @@ echo ""
 
 # Clone/update whisperlive repo
 echo "[+] Ensuring whisperlive repo is up to date..."
-ssh -i "$SSH_KEY_PATH" ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
 set -e
 if [ -d ~/whisperlive ]; then
     echo "Updating existing repo..."
@@ -142,7 +160,7 @@ echo ""
 echo "============================================================================"
 echo "Verifying Installation"
 echo "============================================================================"
-ssh -i "$SSH_KEY_PATH" ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" << 'REMOTE_SCRIPT'
 python3 << 'PYTHON_VERIFY'
 import sys
 try:

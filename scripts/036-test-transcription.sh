@@ -24,6 +24,7 @@ set -euo pipefail
 SCRIPT_NAME="036-test-transcription"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 echo "============================================================================"
 echo "WhisperLive Transcription Test"

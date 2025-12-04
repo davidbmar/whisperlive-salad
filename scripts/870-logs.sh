@@ -8,8 +8,10 @@
 
 set -euo pipefail
 
+SCRIPT_NAME="870-logs"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 # Parse arguments
 FOLLOW=""

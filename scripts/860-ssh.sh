@@ -7,8 +7,10 @@
 
 set -euo pipefail
 
+SCRIPT_NAME="860-ssh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 # Load environment
 load_env_or_fail

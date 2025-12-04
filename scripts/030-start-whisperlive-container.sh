@@ -39,6 +39,7 @@ SCRIPT_VERSION="1.0.0"
 # Load common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 # Default options
 FORCE=false

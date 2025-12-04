@@ -80,6 +80,44 @@ json_log() {
 }
 
 # ============================================================================
+# File Logging
+# ============================================================================
+
+# Global to track if logging has been started
+_LOGGING_STARTED="${_LOGGING_STARTED:-false}"
+_LOG_FILE=""
+
+start_logging() {
+    local script_name="${1:-${SCRIPT_NAME:-unknown}}"
+
+    # Don't start logging twice
+    if [ "$_LOGGING_STARTED" = "true" ]; then
+        return 0
+    fi
+
+    # Create log filename
+    local timestamp=$(date +%Y%m%d-%H%M%S)
+    _LOG_FILE="$LOGS_DIR/${script_name}-${timestamp}.log"
+
+    # Redirect stdout and stderr to both console and log file
+    exec > >(tee -a "$_LOG_FILE") 2>&1
+
+    _LOGGING_STARTED="true"
+
+    # Log header
+    echo "============================================================================"
+    echo "Log started: $(date)"
+    echo "Script: $script_name"
+    echo "Log file: $_LOG_FILE"
+    echo "============================================================================"
+    echo ""
+}
+
+get_log_file() {
+    echo "$_LOG_FILE"
+}
+
+# ============================================================================
 # Environment Management
 # ============================================================================
 

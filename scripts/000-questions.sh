@@ -4,6 +4,7 @@
 
 set -e
 
+SCRIPT_NAME="000-questions"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
@@ -11,6 +12,19 @@ cd "$PROJECT_ROOT"
 TEMPLATE_FILE=".env.template"
 ENV_FILE=".env"
 BACKUP_FILE=".env.backup-$(date +%Y%m%d-%H%M%S)"
+
+# Setup logging
+LOGS_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOGS_DIR"
+LOG_FILE="$LOGS_DIR/${SCRIPT_NAME}-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "============================================================================"
+echo "Log started: $(date)"
+echo "Script: $SCRIPT_NAME"
+echo "Log file: $LOG_FILE"
+echo "============================================================================"
+echo ""
 
 # Colors for output
 RED='\033[0;31m'
@@ -24,6 +38,90 @@ echo "==========================================================================
 echo -e "${CYAN}WhisperLive GPU Deployment - Environment Configuration${NC}"
 echo "============================================================================"
 echo ""
+echo -e "${YELLOW}WARNING: Do not commit .env or .env.backup* files to git!${NC}"
+echo -e "${YELLOW}         They contain deployment-specific configuration.${NC}"
+echo ""
+
+# ============================================================================
+# Check for existing GPU instance
+# ============================================================================
+if [ -f "$ENV_FILE" ]; then
+    EXISTING_INSTANCE_ID=$(grep "^GPU_INSTANCE_ID=" "$ENV_FILE" 2>/dev/null | cut -d= -f2)
+
+    if [ -n "$EXISTING_INSTANCE_ID" ] && [ "$EXISTING_INSTANCE_ID" != "TO_BE_DISCOVERED" ]; then
+        echo -e "${RED}============================================================================${NC}"
+        echo -e "${RED}EXISTING GPU INSTANCE DETECTED${NC}"
+        echo -e "${RED}============================================================================${NC}"
+        echo ""
+        echo -e "Instance ID: ${CYAN}$EXISTING_INSTANCE_ID${NC}"
+
+        # Check instance state via AWS
+        INSTANCE_STATE=$(aws ec2 describe-instances \
+            --instance-ids "$EXISTING_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text 2>/dev/null || echo "not-found")
+
+        case "$INSTANCE_STATE" in
+            "running")
+                echo -e "State: ${GREEN}RUNNING${NC}"
+                echo ""
+                echo -e "${RED}WARNING: This instance is RUNNING and incurring costs!${NC}"
+                echo -e "${RED}         Continuing will ORPHAN this instance.${NC}"
+                echo -e "${RED}         You will continue paying ~\$0.53/hour until you terminate it.${NC}"
+                echo ""
+                echo -e "Recommended actions:"
+                echo -e "  ${YELLOW}1. Stop the instance:${NC}     ./scripts/810-stop-gpu-instance.sh"
+                echo -e "  ${YELLOW}2. Terminate instance:${NC}    aws ec2 terminate-instances --instance-ids $EXISTING_INSTANCE_ID"
+                echo -e "  ${YELLOW}3. Reuse existing:${NC}        Skip this script, use existing deployment"
+                ;;
+            "stopped")
+                echo -e "State: ${YELLOW}STOPPED${NC}"
+                echo ""
+                echo -e "${YELLOW}WARNING: This instance exists but is stopped.${NC}"
+                echo -e "${YELLOW}         Continuing will ORPHAN this instance.${NC}"
+                echo -e "${YELLOW}         You will still pay ~\$8/month for EBS storage.${NC}"
+                echo ""
+                echo -e "Recommended actions:"
+                echo -e "  ${YELLOW}1. Terminate instance:${NC}    aws ec2 terminate-instances --instance-ids $EXISTING_INSTANCE_ID"
+                echo -e "  ${YELLOW}2. Restart existing:${NC}      ./scripts/820-start-gpu-instance.sh"
+                echo -e "  ${YELLOW}3. Continue anyway:${NC}       Old instance will be orphaned"
+                ;;
+            "terminated"|"not-found")
+                echo -e "State: ${GREEN}TERMINATED/NOT FOUND${NC} (safe to proceed)"
+                ;;
+            *)
+                echo -e "State: ${YELLOW}$INSTANCE_STATE${NC}"
+                echo ""
+                echo -e "${YELLOW}Instance is in transitional state. Wait and try again.${NC}"
+                ;;
+        esac
+
+        if [ "$INSTANCE_STATE" = "running" ] || [ "$INSTANCE_STATE" = "stopped" ]; then
+            echo ""
+            echo -e "${RED}============================================================================${NC}"
+            read -p "Continue and orphan existing instance? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted. Existing configuration preserved."
+                exit 0
+            fi
+            echo ""
+        fi
+    fi
+fi
+
+# Clear stale artifacts from previous deployment
+ARTIFACTS_DIR="$PROJECT_ROOT/artifacts"
+if [ -d "$ARTIFACTS_DIR" ] && [ "$(ls -A "$ARTIFACTS_DIR" 2>/dev/null)" ]; then
+    echo -e "${YELLOW}Clearing previous deployment artifacts:${NC}"
+    for f in "$ARTIFACTS_DIR"/*.json; do
+        if [ -f "$f" ]; then
+            echo -e "  - Removing: $(basename "$f")"
+            rm -f "$f"
+        fi
+    done
+    echo ""
+fi
 
 # Backup existing .env if it exists
 if [ -f "$ENV_FILE" ]; then

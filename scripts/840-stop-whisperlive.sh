@@ -4,8 +4,10 @@
 
 set -euo pipefail
 
+SCRIPT_NAME="840-stop-whisperlive"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common-library.sh"
+start_logging "$SCRIPT_NAME"
 
 REMOVE_CONTAINER=false
 if [ "${1:-}" = "--remove" ]; then

@@ -54,3 +54,4 @@ htmlcov/
 # Build artifacts
 artifacts/
 *.tar.gz
+huggingface-cache/

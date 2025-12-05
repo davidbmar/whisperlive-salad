@@ -149,9 +149,31 @@ print_status "ok" "Disk space: ${DISK_SPACE}GB available"
 echo ""
 
 # ============================================================================
-# [3/5] Sync repository via rsync
+# [3/6] Download pyannote model cache from S3 (on build box)
 # ============================================================================
-echo -e "${BLUE}[3/5] Syncing repository to GPU instance...${NC}"
+echo -e "${BLUE}[3/6] Downloading pyannote model cache from S3...${NC}"
+
+S3_MODEL_PATH="s3://dbm-cf-2-web/bintarball/diarized/latest/huggingface-cache.tar.gz"
+CACHE_DIR="$PROJECT_ROOT/huggingface-cache"
+
+# Clean up any existing cache
+rm -rf "$CACHE_DIR"
+mkdir -p "$CACHE_DIR"
+
+# Download and extract model cache
+if aws s3 cp "$S3_MODEL_PATH" - 2>/dev/null | tar -xzf - -C "$CACHE_DIR" 2>/dev/null; then
+    MODEL_COUNT=$(ls "$CACHE_DIR/hub" 2>/dev/null | grep -c models-- || echo 0)
+    print_status "ok" "Downloaded model cache ($MODEL_COUNT models)"
+else
+    print_status "warn" "Could not download model cache - building without pre-cached models"
+    mkdir -p "$CACHE_DIR/hub"
+fi
+echo ""
+
+# ============================================================================
+# [4/6] Sync repository via rsync
+# ============================================================================
+echo -e "${BLUE}[4/6] Syncing repository to GPU instance...${NC}"
 
 # Check rsync is available locally
 if ! command -v rsync &>/dev/null; then
@@ -183,13 +205,13 @@ rsync -avz --progress \
     "$PROJECT_ROOT/" \
     ubuntu@"$GPU_IP":/opt/whisperlive/
 
-print_status "ok" "Repository synced"
+print_status "ok" "Repository synced (including model cache)"
 echo ""
 
 # ============================================================================
-# [4/5] Build Docker image
+# [5/6] Build Docker image
 # ============================================================================
-echo -e "${BLUE}[4/5] Building Docker image on GPU instance...${NC}"
+echo -e "${BLUE}[5/6] Building Docker image on GPU instance...${NC}"
 
 IMAGE_TAG="${DOCKER_IMAGE:-whisperlive-salad}:${DOCKER_TAG:-latest}"
 echo "Building image: $IMAGE_TAG"
@@ -198,11 +220,11 @@ if [ -n "$NO_CACHE" ]; then
 fi
 echo ""
 
-# Build the image
+# Build the image (--skip-models since we already synced the cache)
 BUILD_START=$(date +%s)
 
 ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@"$GPU_IP" \
-    "cd /opt/whisperlive && ./salad/build.sh --tag '$IMAGE_TAG' $NO_CACHE"
+    "cd /opt/whisperlive && ./salad/build.sh --tag '$IMAGE_TAG' --skip-models $NO_CACHE"
 
 BUILD_END=$(date +%s)
 BUILD_DURATION=$((BUILD_END - BUILD_START))
@@ -211,9 +233,12 @@ print_status "ok" "Docker image built in $(format_duration $BUILD_DURATION)"
 echo ""
 
 # ============================================================================
-# [5/5] Verify and report
+# [6/6] Verify and cleanup
 # ============================================================================
-echo -e "${BLUE}[5/5] Verifying image...${NC}"
+echo -e "${BLUE}[6/6] Verifying image and cleaning up...${NC}"
+
+# Clean up local model cache
+rm -rf "$CACHE_DIR"
 
 # Check image exists
 if ! check_docker_image_exists "$GPU_IP" "$SSH_KEY_PATH" "$IMAGE_TAG"; then
